@@ -1,11 +1,17 @@
-all : link
+all: clean link
+link: compile 
+	gcc -g -m32 -Wall -o myshell myshell.o
+	gcc -g -m32 -Wall -o mypipeline mypipeline.o
 
-link: compile
-	gcc -g -m32 -Wall -o mypipe mypipe.o
+compile: myshell.c mypipeline.c
+	gcc -m32 -g -Wall -c -o myshell.o myshell.c
+	gcc -m32 -g -Wall -c -o mypipeline.o mypipeline.c
 
-compile:clean mypipe.c
+myshell.o: 
+	gcc -m32 -g -Wall -c -o myshell.o myshell.c
 
-	gcc -g -m32 -Wall -c -o mypipe.o mypipe.c
+mypipeline.o:
+	gcc -m32 -g -Wall -c -o mypipeline.o mypipeline.c
 
 clean:
-	rm -f *.o mypipe
+	rm -f *.o myshell mypipeline
