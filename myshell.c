@@ -87,6 +87,27 @@ static char *cloneFirstWord(char *str)
 
     return word;
 }
+cmdLine* cloneCmdLine(cmdLine* src) {
+    if (!src) return NULL;
+
+    cmdLine* c = malloc(sizeof(cmdLine));
+    memset(c, 0, sizeof(cmdLine));
+
+    c->argCount = src->argCount;
+    c->blocking = src->blocking;
+    c->idx = src->idx;
+
+    for (int i = 0; i < src->argCount; i++)
+        ((char**)c->arguments)[i] = strdup(src->arguments[i]);
+
+    if (src->inputRedirect)
+        c->inputRedirect = strdup(src->inputRedirect);
+    if (src->outputRedirect)
+        c->outputRedirect = strdup(src->outputRedirect);
+
+    c->next = cloneCmdLine(src->next);
+    return c;
+}
 
 static void extractRedirections(char *strLine, cmdLine *pCmdLine)
 {
@@ -369,7 +390,7 @@ void addProcess(process **process_list, cmdLine *cmd, pid_t pid) {
         perror("malloc failed");
         return;
     }
-    new_process->cmd = cmd;
+    new_process->cmd = cloneCmdLine(cmd);
     new_process->pid = pid;
     new_process->status = RUNNING;
     new_process->next = *process_list;
@@ -381,26 +402,34 @@ void execute(cmdLine* pCmdLine) {
     if(!pCmdLine) return;
 
     if(pCmdLine->next == NULL) { // NO PIPE
-        pid_t pid = fork();
-        addProcess(&processes_list, pCmdLine, pid);
-        if(pid == 0) {
-            if(pCmdLine->inputRedirect) {
-                int fd = open(pCmdLine->inputRedirect, O_RDONLY);
-                dup2(fd, STDIN_FILENO);
-                close(fd);
-            }
-            if(pCmdLine->outputRedirect) {
-                int fd = open(pCmdLine->outputRedirect,
-                              O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                dup2(fd, STDOUT_FILENO);
-                close(fd);
-            }
-            execvp(pCmdLine->arguments[0], pCmdLine->arguments);
-            perror("execvp");
-            _exit(1);
+       pid_t pid = fork();
+
+    if (pid == 0) {
+        // CHILD
+        if(pCmdLine->inputRedirect) {
+            int fd = open(pCmdLine->inputRedirect, O_RDONLY);
+            dup2(fd, STDIN_FILENO);
+            close(fd);
         }
-        if(pCmdLine->blocking)
+        if(pCmdLine->outputRedirect) {
+            int fd = open(pCmdLine->outputRedirect,
+                        O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+        }
+        execvp(pCmdLine->arguments[0], pCmdLine->arguments);
+        perror("execvp");
+        _exit(1);
+    }
+    else {
+        // PARENT ONLY
+        addProcess(&processes_list, pCmdLine, pid);
+
+        if(pCmdLine->blocking){
             waitpid(pid, NULL, 0);
+            updateProcessStatus(processes_list, pid, TERMINATED);
+        }
+    }
         return;
     }
 
@@ -412,7 +441,6 @@ void execute(cmdLine* pCmdLine) {
 
     int fd[2]; pipe(fd);
     pid_t pid1 = fork();
-    addProcess(&processes_list, pCmdLine, pid1);
     if(pid1==0) {
         close(fd[0]);
         dup2(fd[1], STDOUT_FILENO);
@@ -421,9 +449,12 @@ void execute(cmdLine* pCmdLine) {
         perror("execvp left");
         _exit(1);
     }
+    else{
+        addProcess(&processes_list, pCmdLine, pid1);
+        
+    }
 
     pid_t pid2 = fork();
-    addProcess(&processes_list, pCmdLine, pid2);
     if(pid2==0) {
         close(fd[1]);
         dup2(fd[0], STDIN_FILENO);
@@ -431,6 +462,9 @@ void execute(cmdLine* pCmdLine) {
         execvp(pCmdLine->next->arguments[0], pCmdLine->next->arguments);
         perror("execvp right");
         _exit(1);
+    }
+    else{
+        addProcess(&processes_list, pCmdLine, pid2);
     }
 
     close(fd[0]); close(fd[1]);
